@@ -1,0 +1,29 @@
+{
+  "name": "backend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node --env-file-if-exists=.env --import tsx --watch src/index.ts",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test test/auth.test.ts",
+    "start": "node --env-file-if-exists=.env dist/index.js"
+  },
+  "dependencies": {
+    "connect-redis": "^10.0.0",
+    "express": "^5.0.0",
+    "express-session": "^1.19.0",
+    "google-auth-library": "^11.3.2",
+    "redis": "^6.3.1",
+    "session-file-store": "^1.5.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/express-session": "^1.19.0",
+    "@types/node": "^22.0.0",
+    "@types/session-file-store": "^1.2.6",
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0"
+  }
+}
