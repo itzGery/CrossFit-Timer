@@ -29,5 +29,6 @@ export function getAppOptions(sessionStore?: AppOptions['sessionStore']): AppOpt
     production,
     nodeEnv: process.env.NODE_ENV,
     devAllowedEmail: process.env.DEV_ALLOWED_EMAIL,
+    allowProductionTestGmail: process.env.ALLOW_PRODUCTION_TEST_GMAIL === 'true',
   }
 }

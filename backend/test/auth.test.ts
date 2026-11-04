@@ -34,6 +34,11 @@ function fakePayload(credential: string): TokenPayload {
     payload.email = 'gerardfideu24@gmail.com'
     delete payload.hd
   }
+  if (credential === 'other-gmail') {
+    payload.email = 'someoneelse@gmail.com'
+    delete payload.hd
+  }
+  if (credential === 'gmail-with-hd') payload.email = 'gerardfideu24@gmail.com'
   return payload
 }
 
@@ -75,7 +80,7 @@ test('Google sign-in, authorization, and logout', async () => {
     for (const credential of ['invalid', 'expired', 'wrong-audience', 'wrong-issuer']) {
       assert.equal((await post('/api/auth/google', { credential })).status, 401, credential)
     }
-    for (const credential of ['unverified', 'missing-hd', 'wrong-hd', 'outside-email', 'gmail']) {
+    for (const credential of ['unverified', 'missing-hd', 'wrong-hd', 'outside-email', 'gmail', 'other-gmail', 'gmail-with-hd']) {
       const denied = await post('/api/auth/google', { credential })
       assert.equal(denied.status, 403, credential)
       assert.deepEqual(await denied.json(), { error: 'Only verified @yaqbot.com Workspace accounts can sign in.' })
@@ -318,5 +323,80 @@ test('production login sets a Secure session cookie behind the HTTPS proxy', asy
     assert.match(cookieHeader, /SameSite=Lax/i)
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()))
+  }
+})
+
+test('production test Gmail uses the shared session store and is revoked when the flag is disabled', async () => {
+  const origin = 'https://timer.example'
+  const sharedStore = new session.MemoryStore()
+  const options = {
+    googleClientId: clientId,
+    allowedGoogleDomain: 'yaqbot.com',
+    sessionSecret: 'test-only-session-secret-at-least-32-characters',
+    sessionStore: sharedStore,
+    frontendOrigin: origin,
+    production: true,
+    nodeEnv: 'production',
+    verifyGoogleToken: async (credential: string) => {
+      if (credential === 'invalid') throw new Error('Invalid signature')
+      return fakePayload(credential)
+    },
+  }
+  const enabled = createApp({ ...options, allowProductionTestGmail: true }).listen(0, '127.0.0.1')
+  const disabled = createApp(options).listen(0, '127.0.0.1')
+  await Promise.all([enabled, disabled].map((server) =>
+    new Promise<void>((resolve) => server.once('listening', resolve))))
+  const enabledUrl = `http://127.0.0.1:${(enabled.address() as AddressInfo).port}`
+  const disabledUrl = `http://127.0.0.1:${(disabled.address() as AddressInfo).port}`
+
+  async function signIn(baseUrl: string, credential: string) {
+    return fetch(`${baseUrl}/api/auth/google`, {
+      method: 'POST',
+      headers: { Origin: origin, 'X-Forwarded-Proto': 'https', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ credential }),
+    })
+  }
+  async function share(baseUrl: string, cookie: string) {
+    return fetch(`${baseUrl}/api/workouts/share`, {
+      method: 'POST',
+      headers: { Cookie: cookie, Origin: origin, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: 'amrap', durationSeconds: 60 }),
+    })
+  }
+
+  try {
+    for (const credential of ['unverified-gmail', 'other-gmail', 'outside-email']) {
+      assert.equal((await signIn(enabledUrl, credential)).status, 403, credential)
+    }
+    for (const credential of ['invalid', 'expired', 'wrong-audience', 'wrong-issuer']) {
+      assert.equal((await signIn(enabledUrl, credential)).status, 401, credential)
+    }
+    assert.equal((await signIn(disabledUrl, 'gmail')).status, 403)
+
+    const login = await signIn(enabledUrl, 'gmail')
+    assert.equal(login.status, 200)
+    const cookieHeader = login.headers.get('set-cookie') ?? ''
+    assert.match(cookieHeader, /Secure/i)
+    assert.match(cookieHeader, /HttpOnly/i)
+    assert.match(cookieHeader, /SameSite=Lax/i)
+    const cookie = cookieHeader.split(';')[0]
+    assert.ok(cookie)
+    assert.deepEqual(await (await fetch(`${enabledUrl}/api/auth/me`, { headers: { Cookie: cookie } })).json(), {
+      coach: { sub: 'google-user-1', email: 'gerardfideu24@gmail.com' },
+    })
+    assert.equal((await share(enabledUrl, cookie)).status, 200)
+    assert.deepEqual(await (await fetch(`${disabledUrl}/api/auth/me`, { headers: { Cookie: cookie } })).json(), { coach: null })
+    assert.equal((await share(disabledUrl, cookie)).status, 401)
+
+    const workspaceLogin = await signIn(disabledUrl, 'valid')
+    assert.equal(workspaceLogin.status, 200)
+    const workspaceCookie = (workspaceLogin.headers.get('set-cookie') ?? '').split(';')[0]
+    assert.deepEqual(await (await fetch(`${enabledUrl}/api/auth/me`, { headers: { Cookie: workspaceCookie } })).json(), {
+      coach: { sub: 'google-user-1', email: 'hola@yaqbot.com' },
+    })
+    assert.equal((await share(enabledUrl, workspaceCookie)).status, 200)
+  } finally {
+    await Promise.all([enabled, disabled].map((server) =>
+      new Promise<void>((resolve) => server.close(() => resolve()))))
   }
 })

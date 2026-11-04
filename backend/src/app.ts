@@ -7,6 +7,7 @@ import { parseWorkoutConfig, workoutPath } from './workout.js'
 
 const SESSION_COOKIE_NAME = 'yaqbot.sid'
 const DEFAULT_SESSION_MAX_AGE_MS = 8 * 60 * 60 * 1000
+const PRODUCTION_TEST_EMAIL = 'gerardfideu24@gmail.com'
 
 export type AppOptions = {
   googleClientId: string
@@ -18,6 +19,7 @@ export type AppOptions = {
   production: boolean
   nodeEnv?: string
   devAllowedEmail?: string
+  allowProductionTestGmail?: boolean
   sessionMaxAgeMs?: number
   sessionReapIntervalSeconds?: number
   verifyGoogleToken?: GoogleTokenVerifier
@@ -46,6 +48,10 @@ export function createApp(options: AppOptions) {
   const localHostnames = ['localhost', '127.0.0.1', '[::1]']
   const localDevelopment = options.nodeEnv === 'development' && !options.production &&
     localHostnames.includes(new URL(options.frontendOrigin).hostname)
+  const authorizedCoach = (request: express.Request) => Boolean(request.session.coach && (
+    !options.production || request.session.workspaceCoach === true ||
+    (options.allowProductionTestGmail === true && request.session.coach.email === PRODUCTION_TEST_EMAIL)
+  ))
 
   app.disable('x-powered-by')
   app.set('trust proxy', options.production ? 1 : false)
@@ -74,7 +80,7 @@ export function createApp(options: AppOptions) {
   }
 
   const requireCoach: RequestHandler = (request, response, next) => {
-    if (!request.session.coach || (options.production && request.session.workspaceCoach !== true)) {
+    if (!authorizedCoach(request)) {
       response.status(401).json({ error: 'Sign in with an authorized coach account.' })
       return
     }
@@ -87,9 +93,7 @@ export function createApp(options: AppOptions) {
 
   app.get('/api/auth/me', (request, response) => {
     response.set('Cache-Control', 'no-store')
-    const coach = options.production && request.session.workspaceCoach !== true
-      ? null
-      : request.session.coach ?? null
+    const coach = authorizedCoach(request) ? request.session.coach : null
     response.json({ coach })
   })
 
@@ -106,7 +110,8 @@ export function createApp(options: AppOptions) {
       options.googleClientId,
       options.allowedGoogleDomain,
       options.verifyGoogleToken,
-      localDevelopment ? options.devAllowedEmail?.trim() || undefined : undefined,
+      options.production && options.allowProductionTestGmail === true ? PRODUCTION_TEST_EMAIL :
+        localDevelopment ? options.devAllowedEmail?.trim() || undefined : undefined,
     )
     if (result.status !== 200) {
       response.status(result.status).json({ error: result.error })
