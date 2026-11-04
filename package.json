@@ -1,6 +1,7 @@
 {
   "name": "crossfit-app",
   "private": true,
+  "type": "module",
   "workspaces": [
     "frontend",
     "backend"
